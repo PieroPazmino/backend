@@ -1,34 +1,20 @@
-from django.shortcuts import render
-
-# Create your views here.
-from django.http import HttpResponse
-
 # Importe requests y json
 import requests
 import json
-import re
-from datetime import datetime
-from collections import defaultdict
 
-# Importe el decorador login_required
-from django.contrib.auth.decorators import login_required
+from django.shortcuts import render
+from datetime import datetime
+
+# Create your views here.
+from django.http import HttpResponse
 
 # Importe el decorador login_required
 from django.contrib.auth.decorators import login_required, permission_required
 
 # Restricción de acceso con @login_required
 @login_required
-
-
-
-# Restricción de acceso con @login_required y permisos con @permission_required
-@login_required
 @permission_required('main.index_viewer', raise_exception=True)
-
 def index(request):
-    # return HttpResponse("Hello, World!")
-    # return render(request, 'main/base.html')
-
     # Arme el endpoint del REST API
     current_url = request.build_absolute_uri()
     url = current_url + '/api/v1/landing'
@@ -43,67 +29,65 @@ def index(request):
     # Respuestas totales
     total_responses = len(response_dict.keys())
 
-    # Convertir las fechas a objetos datetime y recopilar para análisis
-    saved_dates = []
-    day_counts = defaultdict(int)
+    responses = list(response_dict.values())  # Convertir los valores a lista
 
-    for key, value in response_dict.items():
-        # Manejar posibles claves faltantes como 'suscripcion'
-        saved_str = value.get('saved')
-        if saved_str:
-            try:
-                # Reemplazar 'a. m.' y 'p. m.' con 'AM' y 'PM' usando expresiones regulares
-                saved_str = re.sub(r'a\.\s*m\.', 'AM', saved_str, flags=re.IGNORECASE)
-                saved_str = re.sub(r'p\.\s*m\.', 'PM', saved_str, flags=re.IGNORECASE)
+    # Ordenar las respuestas por la fecha del atributo "saved"
+    def parse_date(response):
+        try:
+            if isinstance(response, dict) and "saved" in response:
+                raw_date = response["saved"]
 
-                # Eliminar posibles caracteres no imprimibles o espacios no estándar
-                saved_str = saved_str.strip()
+                # Reemplazar espacio no separable y ajustar formato de "a. m." / "p. m."
+                cleaned_date = raw_date.replace('\xa0', ' ').replace('a. m.', 'AM').replace('p. m.', 'PM')
 
-                # Ajustar el formato de la fecha según tus datos
-                saved_date = datetime.strptime(saved_str, '%m/%d/%Y, %I:%M:%S %p')
-                saved_dates.append(saved_date)
-                day = saved_date.date()
-                day_counts[day] += 1
+                print("Fecha limpia:", cleaned_date)  # Para depuración
+                return datetime.strptime(cleaned_date, "%d/%m/%Y, %I:%M:%S %p")
+        except (ValueError, TypeError) as e:
+            print("Error al parsear fecha:", e)
+        return None
 
-                print(f"Fecha procesada: {saved_date}")  # Para depuración
-            except ValueError as e:
-                print(f"Error al parsear la fecha: {e}")
+    # Filtrar respuestas con fechas válidas
+    responses_with_dates = [
+        response for response in responses if parse_date(response) is not None
+    ]
 
-    # Calcular primera y última respuesta
-    if saved_dates:
-        first_response = min(saved_dates).strftime('%d/%m/%Y, %H:%M:%S')
-        last_response = max(saved_dates).strftime('%d/%m/%Y, %H:%M:%S')
-    else:
-        first_response = 'N/A'
-        last_response = 'N/A'
+    # Ordenar respuestas con fechas válidas
+    sorted_responses = sorted(
+        responses_with_dates,
+        key=parse_date,
+        reverse=False,
+    )
+
+    # Obtener la primera y última respuesta
+    first_response = sorted_responses[0] if sorted_responses else None
+    last_response = sorted_responses[-1] if sorted_responses else None
+
+    # Extraer y formatear fechas
+    first_response_date = parse_date(first_response).strftime("%d/%m/%Y") if first_response else None
+    last_response_date = parse_date(last_response).strftime("%d/%m/%Y") if last_response else None
 
     # Calcular el día con más respuestas
-    if day_counts:
-        high_rate_day = max(day_counts, key=day_counts.get).strftime('%d/%m/%Y')
-        high_rate_responses = day_counts[max(day_counts, key=day_counts.get)]
-    else:
-        high_rate_day = 'N/A'
-        high_rate_responses = 0
+    date_counts = {}
+    for response in responses_with_dates:
+        date_obj = parse_date(response)
+        if date_obj:
+            date_str = date_obj.strftime("%d/%m/%Y")  # Solo la fecha
+            date_counts[date_str] = date_counts.get(date_str, 0) + 1
 
-    # Objeto con los datos a renderizar
-    data = {
-        'title': 'Landing - Dashboard',
-        'total_responses': total_responses,
-    }
+    # Encontrar el día con más respuestas
+    high_rate_day = max(date_counts, key=date_counts.get) if date_counts else None
+    high_rate_count = date_counts[high_rate_day] if high_rate_day else 0
 
-    # Valores de la respuesta
-    responses = response_dict.values()
+    high_rate_day_response = high_rate_day if high_rate_day else "Sin datos"
 
     # Objeto con los datos a renderizar
     data = {
         'title': 'Landing - Dashboard',
         'total_responses': total_responses,
         'responses': responses,
-        'first_response': first_response,
-        'last_response': last_response,
-        'high_rate_day': high_rate_day,
-        'high_rate_responses': high_rate_responses,
+        'first_responses': first_response_date,
+        'last_responses':  last_response_date,
+        'high_rate_responses': high_rate_day_response
     }
 
-    # Renderización en la plantilla
     return render(request, 'main/index.html', data)
